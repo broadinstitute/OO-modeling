@@ -23,8 +23,10 @@ library(parallel)
 library(ggplot2)
 library(ggraph)
 
-data <- read.csv("~/Desktop/OO-paper/histories_BYU.csv")
-leger <- read.csv("~/Desktop/OO-paper/participants_BYU.csv")
+setwd("~/Desktop/OO-modeling")
+
+data <- read.csv("./histories_BYU.csv")
+leger <- read.csv("./participants_BYU.csv")
 
 leger[,"p2p_id"] <- paste(leger[,"p2p_id"])
 data[,"peer_id"] <- paste(data[,"peer_id"])
@@ -182,6 +184,7 @@ summary(lmod2)
 # Abysmal correlation
 cor(preds2, deps2)
 ```
+
 
 ACT THREE. Stochastic bootstrap model.
 
