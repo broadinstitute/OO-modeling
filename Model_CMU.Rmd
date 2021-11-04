@@ -21,9 +21,12 @@ library(Rfast)
 library(mixdist)
 library(parallel)
 library(ggplot2)
+library(scales)
 
-data <- read.csv("~/Desktop/OO-paper/histories_CMU.csv")
-leger <- read.csv("~/Desktop/OO-paper/participants_CMU.csv")
+setwd("~/Desktop/OO-modeling/")
+
+data <- read.csv("./histories_CMU.csv")
+leger <- read.csv("./participants_CMU.csv")
 
 leger[,"p2p_id"] <- paste(leger[,"p2p_id"])
 data[,"peer_id"] <- paste(data[,"peer_id"])
@@ -494,7 +497,7 @@ get_p <- function(params){
 
 best_p <- optim(c(235,0.08), get_p)$par
 
-get_p(best_p)
+RMSE <- sqrt(get_p(best_p))
 
 mod_fn <- function(x){
   best_p[1] * (1 - (1 - best_p[2])^x)
@@ -511,6 +514,50 @@ ggplot(dat2, aes(x=x,y=y)) +
     x = "First-Degree Contacts",
     y = "Second-Degree Contacts"
   )
+
+RMSE
+
+```
+Scene 1.6: 1st/2nd time weighted
+```{r}
+
+
+# probability that you're a 2nd-degree contact: 1 - (1-p)^x
+# expected 2nd-deg contacts: (n-1)*(1 - (1-p)^x)
+
+mat2 <- real_adj %*% real_adj
+diag(mat2) <- 0
+
+dat3 <- data.frame(x = colsums(real_adj), y = colsums(mat2))
+
+ggplot(dat3, aes(x=x,y=y)) +
+  geom_point() + 
+  geom_smooth(method=lm, formula = y~x+0, se=FALSE) + 
+  theme_minimal() +
+  labs(
+    title = "Time-Weighted First- and Second-Degree Contacts, CMU",
+    x = "Duration, First-Degree Contacts (seconds)",
+    y = "Duration, Second-Degree * First-Degree Contacts (seconds)"
+  )
+
+summary(lm(colsums(mat2) ~ colsums(real_adj)+ 0))
+
+
+load("./final.RData")
+
+# equal weight
+summary(lm(final ~ deg[deg!=0] + 0))
+
+# duration weight
+summary(lm(final ~ colsums(real_adj)[colsums(real_adj) > 0] + 0))
+
+# kickass one
+summary(lm(final ~ colsums(real_adj)[colsums(real_adj) > 0] + colsums(mat2)[colsums(real_adj) > 0] + 0))
+
+# correlated residuals
+
+cor.test(residuals(lm(colsums(mat2) ~ colsums(real_adj)+ 0))[colsums(real_adj) > 0], final)
+
 
 ```
 
@@ -573,7 +620,7 @@ ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count))
     x = "Time",
     y = "Number of Interactions"
   ) + 
-  scale_x_datetime(breaks = "12 hours", date_labels = "%a %h %d %H:%M") + 
+  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d") + 
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) 
 
@@ -752,6 +799,34 @@ hist(
 
 
 
+
+Did vaccination change promiscuity?
+```{r}
+vaxed <- data$user_id[data$out == "VACCINATED"]
+when_vaxed <- as.POSIXct(data$time[data$out == "VACCINATED"], origin = "1970-01-01", tz = "America/Denver")
+
+# time-weighted
+rate_before <- c()
+rate_after <- c()
+
+# when do contacts start/end
+min_time <- min(contacts$time)
+max_time <- max(contacts$time)
+
+for (i in 1:length(vaxed)) {
+  subc <- subset(contacts, user_id == vaxed[i] | peer_id == vaxed[i])
+  before <- subset(subc, time < when_vaxed[i])
+  after <- subset(subc, time >= when_vaxed[i])
+  
+  rate_before[i] <- as.numeric(length(before$duration)) / as.numeric(difftime(when_vaxed[i], min_time, units = "secs"))
+  rate_after[i] <- as.numeric(length(after$duration)) / as.numeric(difftime(max_time, when_vaxed[i], units = "secs"))
+  
+}
+
+t.test(rate_after, rate_before)
+
+
+```
 
 
 
