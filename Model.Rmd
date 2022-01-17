@@ -355,11 +355,6 @@ lambda <- nlm(err, R0/(((sigma2 + mu^2)/mu - 1) * mean(total_time)))$estimate
 
 ## Compute current overdispersion based on contacts. See mathematica PGF nb for derivation.
 
-# psi = probability of transmission given contact
-psi <- mean(1 - exp(-lambda * total_time))
-
-var_transmissions <- psi*(1-psi)*(1-p_contact_dist)*(1+r_contact_dist)/p_contact_dist + (psi^2)*(1-p_contact_dist)*(1+r_contact_dist)/(p_contact_dist^2)
-
 ###------
 
 # get gamma params
@@ -539,6 +534,7 @@ Scene 4. MC simulation.
 ```{r}
 
 results <- matrix(unlist(mclapply(1:10000, outbreak, mc.cores = 12)), ncol = 2, byrow = TRUE)
+save(results, file = "results_BYU.RData")
 
 ```
 
@@ -616,25 +612,47 @@ get_p <- function(params){
   mean((deg2 - params[1] * (1 - exp(-deg * params[2])))^2)
 }
 
-best_p <- optim(c(235,0.08), get_p)$par
+best_p <- optim(c(238,0.085), get_p)$par
 
 RMSE <- sqrt(get_p(best_p))
 
 mod_fn <- function(x){
-  best_p[1] * (1 - (1 - best_p[2])^x)
+  best_p[1] * (1 - exp(-x * best_p[2]))
 }
 
 dat2 <- data.frame(x = deg, y = deg2)
 
+### which estimates are best, most above, most below?
+# modeled values
+mod_vals <- sapply(deg, mod_fn)
+
+# biggest underestimate
+under <- which.min(deg2 - mod_vals)
+
+# closest estimate
+closest <- which(abs(deg2 - mod_vals) == min(abs(deg2 - mod_vals)[abs(deg2 - mod_vals) > 0]))
+
+# biggest overestimate
+over <- which.max(deg2 - mod_vals)
+
+# pull out these special points and recolor them
+scatter_colors <- rep("black", nrow(dat2))
+scatter_colors[c(under, closest, over)] <- "green"
+
 ggplot(dat2, aes(x=x,y=y)) +
-  geom_point() + 
   geom_function(fun = mod_fn, color = "red") + 
+  geom_point(color = scatter_colors) + 
   theme_minimal() +
   labs(
     title = "First- and Second-Degree Contacts, BYU",
     x = "First-Degree Contacts",
     y = "Second-Degree Contacts"
   )
+
+print(mean(deg))
+print(sd(deg))
+print(range(deg))
+
 
 
 
@@ -685,17 +703,6 @@ cor.test(residuals(lm(colsums(mat2) ~ colsums(real_adj)+ 0))[colsums(real_adj) >
 
 Scene 1.75: representative network graphs
 ```{r}
-# modeled values from above
-mod_vals <- sapply(deg, mod_fn)
-
-# biggest underestimate
-under <- which.min(deg2 - mod_vals)
-
-# closest estimate
-closest <- 48
-
-# biggest overestimate
-over <- which.max(deg2 - mod_vals)
 
 under_df <- data.frame(x = rep(under, sum(bin_adj[under,])), y = which(bin_adj[under,]))
 for(i in which(bin_adj[under,])){
@@ -825,9 +832,9 @@ ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count))
     x = "Time",
     y = "Number of Interactions"
   ) + 
-  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d") + 
+  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d 12:00am") + 
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) 
+  theme(axis.text.x = element_text(angle = -45, vjust = 1, hjust=0)) 
 
 
 ```
@@ -994,7 +1001,8 @@ ggplot(results_testing, aes(fill = type, x = cases, y = factor(daily_tests))) +
     title = "Cumulative Cases after 4 Weeks",
     y = "Daily Tests",
     x = "Cases"
-  )
+  ) +
+  scale_x_continuous(trans='log10')
 
 ```
 
@@ -1045,7 +1053,8 @@ ggplot(results_vax, aes(fill = type, x = cases, y = factor(p_vax))) +
     title = "Cumulative Cases after 4 Weeks",
     y = "Proportion Vaccinated",
     x = "Cases"
-  )
+  ) +
+  scale_x_continuous(trans='log10')
 
 ```
 

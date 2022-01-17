@@ -500,7 +500,7 @@ best_p <- optim(c(235,0.08), get_p)$par
 RMSE <- sqrt(get_p(best_p))
 
 mod_fn <- function(x){
-  best_p[1] * (1 - (1 - best_p[2])^x)
+  best_p[1] * (1 - exp(-x * best_p[2]))
 }
 
 dat2 <- data.frame(x = deg, y = deg2)
@@ -515,7 +515,9 @@ ggplot(dat2, aes(x=x,y=y)) +
     y = "Second-Degree Contacts"
   )
 
-RMSE
+print(mean(deg))
+print(sd(deg))
+print(range(deg))
 
 ```
 Scene 1.6: 1st/2nd time weighted
@@ -613,6 +615,9 @@ for (i in 2:length(hour_breaks)) {
 
 timebins <- start + hour_breaks[1:(length(hour_breaks) - 1)]
 
+date_labels <- seq(as.Date("2020-10-29"), as.Date("2020-11-04"), "day")
+date_labels <- mapply(paste, wday(date_labels, label = T), month(date_labels, label = T), day(date_labels), rep("12:00am", length(date_labels)))
+
 ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count)) + 
   geom_line() + 
   labs(
@@ -620,10 +625,9 @@ ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count))
     x = "Time",
     y = "Number of Interactions"
   ) + 
-  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d") + 
+  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = date_labels) + 
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) 
-
+  theme(axis.text.x = element_text(angle = -45, vjust = 1, hjust=0)) 
 
 ```
 
