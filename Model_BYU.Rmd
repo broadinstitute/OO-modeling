@@ -1,7 +1,7 @@
 ---
 title: "Model"
 author: "Ivan Specht"
-date: "4/6/2021"
+date: "2/4/2022"
 output: html_document
 ---
 
@@ -11,10 +11,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## R Markdown
 
-ACT ONE: preliminaries
+SECTION ONE: Preliminaries
 
-Scene 1. Load and clean data
+Sub-section 1. Load and clean data
 ```{r}
+# Relevant libraries
 library(igraph)
 library(lubridate)
 library(Rfast)
@@ -23,40 +24,54 @@ library(parallel)
 library(ggplot2)
 library(ggraph)
 library(scales)
+library(gridExtra)
 
+# Set directory to the location of "OO-modeling" folder
 setwd("~/Desktop/OO-modeling")
 
+# Read in OO simulation backend
 data <- read.csv("./histories_BYU.csv")
-leger <- read.csv("./participants_BYU.csv")
 
+# Read in key to convert between simulation IDs and P2P IDs
+leger <- read.csv("./participants_BYU.csv")
 leger[,"p2p_id"] <- paste(leger[,"p2p_id"])
 data[,"peer_id"] <- paste(data[,"peer_id"])
 
+# Limit data to contacts only
 contacts <- subset(data, type == "contact")
+
+# Reformat contact duration
 contacts$contact_length <- round(milliseconds(contacts$contact_length))
+
+# Compute end time per contact
 end_time <- contacts$time + contacts$contact_length
+
+# Subset dataset to relevant categories
 contacts <- contacts[, c("user_id", "peer_id", "time")]
 contacts <- cbind(contacts, end_time)
 
+# Convert P2P ID to sim ID
 convert_peer_ID <- function(x, leger){
   return(leger[which(leger[,"p2p_id"] == x), "id"][1])
 }
-
 contacts[,"peer_id"] <- sapply(contacts[,"peer_id"], convert_peer_ID, leger = leger)
 
+# Reformat contact time
 contacts$time <- as.POSIXct(contacts$time, origin = "1970-01-01", tz = "America/Denver")
 contacts$end_time <- as.POSIXct(contacts$end_time, origin = "1970-01-01", tz = "America/Denver")
 
+# Make user ID consistently less than peer ID
 lower <- pmin(contacts$user_id, contacts$peer_id)
 upper <- pmax(contacts$user_id, contacts$peer_id)
-
 contacts$user_id <- lower
 contacts$peer_id <- upper
 
 contacts <- contacts[with(contacts, order(user_id, peer_id, time)), ]
 
+# Length between contacts to merge into 1 contact
 gap <- 30 #seconds
 
+# Merge same contacts
 i=2
 while (i < nrow(contacts)) {
   if(
@@ -71,42 +86,45 @@ while (i < nrow(contacts)) {
   }
 }
 
+# Clean up datasheet and merge in relevant metrics
 contacts <- contacts[with(contacts, order(time)), ]
 row.names(contacts) <- 1:nrow(contacts)
 duration <- contacts$end_time - contacts$time
 contacts <- cbind(contacts, duration)
 ```
 
-Scene 2. Process "contacts" into time series data useful for epi
+Sub-section 2. Process "contacts" into time series data useful for epi, over the course of one week
 ```{r}
+# Eliminate contacts shorter than this duration
 min_duration <- 60 #seconds
+
+# Create new dataset for the contacts we're keeping (ts = time series)
 ts <- subset(contacts, duration >= min_duration)
 
-# Escapees
+# Who escaped?
 escape <- subset(data, out == "ESCAPED")
 escape <- escape[, c("user_id", "time")]
 escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
 escape <- escape[order(escape$time),]
 row.names(escape) <- 1:nrow(escape)
 
-# Time info for escape
-
+# When did the simulation start?
 start = as.POSIXct(min(contacts$time), origin = "1970-01-01", tz = "America/Denver")
 
-# get 1 week of contact data
+# Limit to 1 week of contact data
 end <- start + weeks(1)
 
+# Who escaped BEFORE one week elapsed
 escapees <- escape$user_id[escape$time < end]
 
-# full users
+# All participants
 users <- setdiff(leger$id, escapees)
 
-
+# Subset ts
 ts <- subset(ts, (user_id %in% users & peer_id %in% users))
 ts <- subset(ts, time < end)
 
-# convert to 1-week format
-
+# Convert to 1-week format
 ts$time <- difftime(ts$time, start, units = "secs")
 ts$end_time <- difftime(ts$end_time, start, units = "secs")
 
@@ -127,9 +145,9 @@ ts$time <- seconds(ts$time)
 ts$end_time <- seconds(ts$end_time)
 ```
 
-ACT TWO.
+SECTION TWO.
 
-Scene 1. show proportionate mixing assumption (fairly) valid
+Sub-section 1. Demonstrate proportionate mixing assumption, as described in paper
 ```{r}
 
 # Adjacency matrix of total duration of contact(s)
@@ -169,7 +187,7 @@ cor(preds, deps)
 
 ```
 
-Scene 2: show low correlation between degree and length of contact
+Sub-section 2: show low correlation between degree and length of contact
 
 ```{r}
 # predictor variables: proportionate mixing, filtered for nonzero contact length
@@ -182,43 +200,99 @@ deps2 <- as.numeric(real_adj)[deps>0]
 lmod2 <- lm(deps2~preds2+0)
 summary(lmod2)
 
-# Abysmal correlation
+# Low correlation
 cor(preds2, deps2)
 ```
 
-
-ACT THREE. Stochastic bootstrap model.
-
-Scene 1: create bootstrap sampling function for contact times
+Sub-section 3: compare simulated clustering coefficients and path length versus actual
 ```{r}
+
+graph_stats <- function(xxxx){
+  
+  toy_adj <- pred_adj
+  binaries <- runif(nrow(toy_adj) * (nrow(toy_adj) - 1) / 2) < upper_tri(toy_adj)
+  toy_adj[upper.tri(toy_adj)] <- binaries
+  toy_adj <- t(toy_adj)
+  toy_adj[upper.tri(toy_adj)] <- binaries
+  
+  toy_g <- graph_from_adjacency_matrix(toy_adj[colsums(toy_adj) > 0, colsums(toy_adj) > 0], mode = "undirected")
+  
+  return(
+      c(
+      transitivity(toy_g),
+      average.path.length(toy_g)
+    )
+  )
+
+}
+
+res <- matrix(unlist(mclapply(1:10000, graph_stats, mc.cores = 12)), ncol = 2, byrow = TRUE)
+
+mean(res[,1])
+quantile(res[,1], c(0.025, 0.975), type = 1)
+
+mean(res[,2])
+quantile(res[,2], c(0.025, 0.975), type = 1)
+
+```
+
+
+
+
+SECTION THREE. Stochastic bootstrap model.
+
+Sub-section 1: create bootstrap sampling function for contact times
+```{r}
+# Length of simulation, in weeks
 sim_duration <- 4 # WEEKS!!!!
+
+# Length of simulation, in seconds
 sim_duration_secs <- sim_duration*60*60*24*7
 
-# time of simulation start, seconds
+# Time of simulation start, seconds
 start_secs <- second(start) + 60*minute(start) + 60*60*hour(start)
 
+# List of all contacts
 edgelist <- unique(ts[,1:2])
 row.names(edgelist) <- 1:nrow(edgelist)
 
+# Start times of contacts
 c_start <- list()
+
+# End times of contacts
 c_end <- list()
 
 total_time <- c()
 
 for (i in 1:nrow(edgelist)) {
+  # Get all interactions for a given pair
   sub <- subset(ts, user_id == edgelist[i,1] & peer_id == edgelist[i,2])
+  
+  # Extract the start times of the interactions
   c_start[[i]] <- as.numeric(sub$time + rep(seconds(weeks(0:(sim_duration))), each = nrow(sub))) # adding extra week for time offset
+  
+  # Extract the end times of the interactions
   c_end[[i]] <- as.numeric(sub$end_time + rep(seconds(weeks(0:(sim_duration))), each = nrow(sub))) # adding extra week for time offset
+  
+  # Total time in contact for the pair
   total_time[i] <- sum(c_end[[i]] - c_start[[i]])/((sim_duration+1)*60*60*24*7)
 }
 
 # v0 is infection time of infector
 # i is index of edge contact times
 
+# Compute parameters of the Weibull distribution of the generation interval
 wpar1 <- as.numeric(weibullpar(5, 1.9)[1])
 wpar2 <- as.numeric(weibullpar(5, 1.9)[2])
 
-# get time of transmission via UoU with restricted domain
+
+# This function stochastically generates the TIME of transmission between an infectious agent and a susceptible one, given the start time(s) and end time(s) if their interactions.
+
+# pstarts is the CDF of the generation interval distribution evaluated at the start time(s) of the contact(s), relative to the time the infectious agent contracts the virus
+# pends is the CDF of the generation interval distribution evaluated at the end time(s) of the contact(s), relative to the time the infectious agent contracts the virus
+# int is total duration of contact
+
+# We use the probability integral transform to do the calculation
 get_time <- function(pstarts, pends, int){
   
   if(length(pstarts) > 1){
@@ -237,7 +311,22 @@ get_time <- function(pstarts, pends, int){
   )
 }
 
-# returns Inf if no transmission occurs
+
+# This function stochastically decides WHETHER a transmission occurs, and if so, returns the time of transmission; otherwise returns Inf
+
+# i is the index used to bootstrap the interaction times between two agents
+# neighbor is the possible recipient of infection
+# v0 is the time of infection for the index case
+# i0 is the index case
+# vaxed stores which agents are vaccinated
+# masked stores which agents are masked
+# daily tests is the number of tests per day
+# test rate id the frequency with which EACH AGENT gets tested, which may be based on OO data
+# turnaround is test turnaround time
+# start_curfew is the time (daily) at which we start curfew, i.e. no interactions may occur (unused)
+# end_curfew is the time (daily) at which we end curfew (unused)
+# p_curfew is the probability that curfew is obeyed (unused)
+
 transmission_time <- function(i, neighbor, v0, i0, vaxed, masked, daily_tests, test_rate, turnaround, start_curfew, end_curfew, p_curfew){
   
   # convert to days
@@ -270,6 +359,8 @@ transmission_time <- function(i, neighbor, v0, i0, vaxed, masked, daily_tests, t
   
   prob <- 1 - exp(-lambda*int)
   
+  # UNUSED-----
+  
   if(masked[neighbor]){
     prob <- prob*0.3
   }
@@ -277,6 +368,8 @@ transmission_time <- function(i, neighbor, v0, i0, vaxed, masked, daily_tests, t
   if(masked[i0]){
     prob <- prob*0.3
   }
+  
+  # End unused------
   
   if(vaxed[neighbor]){
     prob <- prob * 0.05
@@ -294,18 +387,24 @@ transmission_time <- function(i, neighbor, v0, i0, vaxed, masked, daily_tests, t
 }
 
 # Stochastic function that spreads virus to neighbors (or doesn't)
+
+# neighbors is all the neighbors of i0
 spread <- function(v0, neighbors, i0, vaxed, masked, daily_tests, test_rate, turnaround, start_curfew, end_curfew, p_curfew){
+  
   # uniformly sample a time series for each neighbor, i.e. bootstrap
   indices <- sample(1:nrow(edgelist), size = length(neighbors), replace = TRUE)
+  
   mapply(transmission_time, indices, neighbors, MoreArgs = list(v0 = v0, i0 = i0, vaxed = vaxed, masked = masked, daily_tests = daily_tests, test_rate = test_rate, turnaround = turnaround, start_curfew = start_curfew, end_curfew = end_curfew, p_curfew = p_curfew))
 }
 
 # Get neighbors stochastically.
 get_neighbors <- function(i0, activity, sum_activity){
+  # Choose neighbors probabilistically based on OO activity score
   which(runif(N) < ((activity[i0] * activity / sum_activity)))
 }
 
 # Helper function for getting test rate
+# Test rate is computed as 1 - exp(- constant * activity)
 get_const <- function(const, activity){
   (sum(1 - exp(-const * activity)) - daily_tests)^2
 }
@@ -313,65 +412,63 @@ get_const <- function(const, activity){
 
 ```
 
-Scene 2: Outbreak setup
+Sub-section 2: Outbreak setup
 ```{r}
+# Number of agents
 N = 6000
 
-# first, we estimate the nbin params from the OO data.
-
+# First, we fit a NBin distribution to the number of contacts based on the OO data.
 lik <- function(params, deg){
   -sum(log(dnbinom(deg, params[1], params[2])))
 }
-
 est <- suppressWarnings(
   nlm(lik, p = c(mean(deg)^2/(var(deg) - mean(deg)), mean(deg)/var(deg)), deg=deg)
 )$estimate
 
-# probability of someone's neighbor being included in sample - original BYU data
+# Probability of someone's neighbor being included in sample
 p <- 1/3
 
+# Now we assume the number of contacts an agent makes within the WHOLE population also follows a NBin(r,p) distribution
 # p parameter for full number of contacts
 p_contact_dist <- p*est[2]/(1-est[2]*(1-p))
 
 # r parameter for full number of contacts
 r_contact_dist <- est[1]
 
-# mean + variance in contacts - full sim
+# Mean and variance in number of contacts - full populaution
 mu = (1 - p_contact_dist)*r_contact_dist/p_contact_dist
 sigma2 = (1 - p_contact_dist)*r_contact_dist/(p_contact_dist^2)
 
 
-# Calibrate lambda. First we need to find the average probability of transmission.
+# Calibrate lambda parameter
 
-R0 <- 2
+R0 <- 2 # basic reproductive number
 
+# loss function
 err <- function(lambda){
   (mean(1 - exp(-lambda * total_time)) - R0/((sigma2 + mu^2)/mu - 1))^2
 }
 
 lambda <- nlm(err, R0/(((sigma2 + mu^2)/mu - 1) * mean(total_time)))$estimate
 
-### Overdispersion
 
-## Compute current overdispersion based on contacts. See mathematica PGF nb for derivation.
+# Compute activity levels
 
-###------
+# We assume these activity levels follow a Gamma distribution.
+# The reason for this assumption is that if the number of outward transmissions for agent i is approximately Poisson(activity[i]), then the unconditional distribution in the number of onwards transmissions across all i is NBin, as desired. Therefore, the Gamma distribution is the correct choice for the distribution of activity levels.
 
-# get gamma params
+# Here we compute the shape and rate parameters for the activity level distribution
 shape <- mu^2/(sigma2 - mu)
 rate <- mu/(sigma2 - mu)
 
-# default model params
-
-# probability of being vaccinated
-# may want to set a prior?
-
+# Default model parameters
 default <- list(
   p_vax = 0,
   p_mask = 0,
   vax_strategic = FALSE,
   daily_tests = 0,
   test_strategic = FALSE,
+  test_sens = 0.87,
   turnaround = 1,
   p_curfew = 0,
   curfew_strategic = FALSE
@@ -383,45 +480,28 @@ start_curfew_strategic <- as.numeric(difftime(force_tz(date(start) + hours(10), 
 # when does strategic curfew end, daily? seconds past start time of sim
 end_curfew_strategic <- as.numeric(difftime(force_tz(date(start) + hours(13), "America/Denver"), start, units = "secs"))
 
-
-### a few params from oxford
-#gamma_params <- function(mu, sigma){
-#  return(c(mu^2/sigma^2, mu/sigma^2))
-#}
-
-# https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(20)30230-9/fulltext#sec1
-#shape_time_to_symptoms <- 4.23
-#rate_time_to_symptoms <- 0.81
-
-#shape_time_to_hospital <- 0.74
-#rate_time_to_hospital <- 0.2
-
 ```
 
-Scene 3. OUTBREAK!!!
+Sub-section 3. Outbreak function
 ```{r}
+# Stochastically generate an outbreak
 
 outbreak <- function(
-  idfk,
+  xxxx, # useless argument, needed to run mclapply
   p_vax = default$p_vax, 
   p_mask = default$p_mask,
   vax_strategic = default$vax_strategic, 
   daily_tests = default$daily_tests, 
   test_strategic = default$test_strategic, 
+  test_sens = default$test_sens,
   turnaround = default$turnaround, 
   p_curfew = default$p_curfew, 
   curfew_strategic = default$curfew_strategic
 ) {
 
-  # activity levels
+  # Generate activity levels
   activity <- rgamma(N, shape = shape, rate = rate)
   sum_activity <- sum(activity)
-  
-  #mmm <- outer(activity, activity)/sum_activity
-  #diag(mmm) <- 0
-  #sum((activity/sum_activity) * colsums(mmm)*mean_prob_transmission(lambda))
-  
-  #sum((activity/sum_activity)*activity*mean_prob_transmission(lambda))
   
   # who is vaccinated?
   if(vax_strategic){
@@ -441,12 +521,12 @@ outbreak <- function(
   }else{
     test_rate <- rep(0, N)
   }
+  test_rate <- test_rate * test_sens
   
-  # who wears a mask?
+  # Who wears a mask?
   masked <- rbinom(N, 1, p_mask)
   
-  # when is curfew?
-  
+  # When is curfew? (unused)
   if(curfew_strategic){
     # when does strategic curfew start, daily? fraction of day
     start_curfew <- 10/24
@@ -457,7 +537,6 @@ outbreak <- function(
     start_curfew <- runif(1)
     
     end_curfew <- (start_curfew + 3/24) %% 1
-    
   }
   
   #######
@@ -468,16 +547,13 @@ outbreak <- function(
   # infection time for each agent (seconds)
   inft_time <- rep(Inf, N)
   
-  # death time for each agent (seconds)
-  # death_time <- rep(Inf, N)
-  
-  # who we already spread
+  # who did we already spread the virus to?
   checklist <- rep(0, N)
   
   # when in the cycle of a week do we start?
   adjust <- floor(runif(1, 0, 604800))
-  #adjust <- 0
-  
+
+  # one index case
   seed <- sample(N, 1, prob = activity)
   inft[seed] <- 1
   inft_time[seed] <- adjust
@@ -485,33 +561,18 @@ outbreak <- function(
   first = TRUE
   
   while (sum(inft) > sum(checklist)) {
+    # For whom do we need to generate infections?
     who <- which((inft - checklist) == 1)
-    #print(who)
     
     all_v0 <- inft_time[who]
     neighbors <- lapply(who, get_neighbors, activity = activity, sum_activity = sum_activity)
     
+    # When do we transmit, if at all?
     transmit_times <- mapply(spread, all_v0, neighbors, who, MoreArgs = list(vaxed = vaxed, masked = masked, daily_tests = daily_tests, test_rate = test_rate, turnaround = turnaround, start_curfew = start_curfew, end_curfew = end_curfew, p_curfew = p_curfew), SIMPLIFY = FALSE)
     
-    
+    # Update who's infected and update checklist
     for (i0 in 1:length(who)) {
-      
-      #secondaries <- neighbors[[i0]][which(transmit_times[[i0]] < inft_time[neighbors[[i0]]])]
-      #inft_time[secondaries] <- transmit_times[[i0]][which(transmit_times[[i0]] < inft_time[neighbors[[i0]]])]
-      
       inft_time[neighbors[[i0]]] <- pmin(inft_time[neighbors[[i0]]], transmit_times[[i0]])
-      
-      
-      # https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(20)30230-9/fulltext#sec1
-      # see appendix
-      # time to death:
-      #https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(20)30769-6/fulltext#sec1
-      
-      #death_time[secondaries] <- inft_time[secondaries] + rgamma(length(secondaries), shape = 4.23, rate = 0.81) + rgamma(length(secondaries), shape = 4.23, rate = 0.81) + 
-      
-      #newmtx <- matrix(c(rep(i0, length(secondaries)), secondaries), ncol = 2)
-      #sim_edgelist <- rbind(sim_edgelist, newmtx)
-      
       inft[which(inft_time < (sim_duration_secs + adjust))] <- 1
     }
     checklist[who] <- 1
@@ -529,16 +590,17 @@ outbreak <- function(
 
 ```
 
-Scene 4. MC simulation.
+Sub-section 4. MC simulation.
 
 ```{r}
+# MC simulation at 10000 reps
 
 results <- matrix(unlist(mclapply(1:10000, outbreak, mc.cores = 12)), ncol = 2, byrow = TRUE)
-save(results, file = "results_BYU.RData")
+#save(results, file = "results_BYU.RData")
 
 ```
 
-Scene 5. summary stats
+Sub-section 5. summary stats
 ```{r}
 
 R_eff <- mean(results[,1])
@@ -562,24 +624,9 @@ est <- suppressWarnings(
 
 ```
 
-ACT FOUR: Visualization
+SECTION FOUR: Visualization
 
-Visuals list:
-- Act 1 viz:
-1-- hist numbers of contacts (+ NBin/Bin mixed stat model?)
-2-- hist durations of contacts
-3-- hist total duration of contacts by person
-4-- hist time of contact
-
-- Act 2 viz:
-5-- actual contact graph vs. generated contact graph (+ summary stats)
-
-- Act 3 viz:
-6-- representative transmission tree
-7-- hist of 4-week case counts
-
-
-Scene 1: number of contacts, 1st and second degree
+Figure 1: number of contacts, 1st and 2nd degree
 ```{r}
 deg2 <- c()
 for(i in 1:length(users)){
@@ -597,16 +644,43 @@ ggplot(dat, aes(x=Contacts, fill=Degree)) +
   ) + scale_color_brewer(palette="Dark2") + scale_fill_brewer(palette="Dark2") +
 theme_minimal()
 
+ggsave("./out/figure1b.pdf", width = 6.5, height = 4)
+
 
 ```
 
-Scene 1.5: scatterplot first/second degree
+Figure 2: when people are interacting
 ```{r}
+hour_interactions <- c()
+hour_breaks <- seconds(seq(0, 604800, 3600))
+for (i in 2:length(hour_breaks)) {
+  sub <- subset(ts, hour_breaks[i-1] <= time & time < hour_breaks[i])
+  sub <- unique(sub[,1:2])
+  hour_interactions[i-1] <- nrow(sub)
+}
+
+timebins <- start + hour_breaks[1:(length(hour_breaks) - 1)]
+
+ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count)) + 
+  geom_line() + 
+  labs(
+    title = "Timing of Interactions, BYU",
+    x = "Time",
+    y = "Number of Interactions"
+  ) + 
+  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d 12:00am") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = -45, vjust = 1, hjust=0), plot.margin=unit(c(5.5,22,5.5,5.5), "pt")) 
+
+ggsave("./out/figure2b.pdf", width = 6.5, height = 4)
+
+
+```
 
 
 
-# probability that you're a 2nd-degree contact: 1 - (1-p)^x
-# expected 2nd-deg contacts: (n-1)*(1 - (1-p)^x)
+Figure 3: Scatterplot of 1st and 2nd degree contacts
+```{r}
 
 get_p <- function(params){
   mean((deg2 - params[1] * (1 - exp(-deg * params[2])))^2)
@@ -630,7 +704,7 @@ mod_vals <- sapply(deg, mod_fn)
 under <- which.min(deg2 - mod_vals)
 
 # closest estimate
-closest <- which(abs(deg2 - mod_vals) == min(abs(deg2 - mod_vals)[abs(deg2 - mod_vals) > 0]))
+closest <- 204
 
 # biggest overestimate
 over <- which.max(deg2 - mod_vals)
@@ -649,6 +723,8 @@ ggplot(dat2, aes(x=x,y=y)) +
     y = "Second-Degree Contacts"
   )
 
+ggsave("./out/figure3b.pdf", width = 6.5, height = 4)
+
 print(mean(deg))
 print(sd(deg))
 print(range(deg))
@@ -658,50 +734,8 @@ print(range(deg))
 
 ```
 
-Scene 1.6: 1st/2nd time weighted
-```{r}
 
-
-# probability that you're a 2nd-degree contact: 1 - (1-p)^x
-# expected 2nd-deg contacts: (n-1)*(1 - (1-p)^x)
-
-mat2 <- real_adj %*% real_adj
-diag(mat2) <- 0
-
-dat3 <- data.frame(x = colsums(real_adj), y = colsums(mat2))
-
-ggplot(dat3, aes(x=x,y=y)) +
-  geom_point() + 
-  geom_smooth(method=lm, formula = y~x+0, se=FALSE) + 
-  theme_minimal() +
-  labs(
-    title = "Time-Weighted First- and Second-Degree Contacts, BYU",
-    x = "Duration, First-Degree Contacts (seconds)",
-    y = "Duration, Second-Degree * First-Degree Contacts (seconds)"
-  )
-
-summary(lm(colsums(mat2) ~ colsums(real_adj)+ 0))
-
-
-load("./final_BYU.RData")
-
-# equal weight
-summary(lm(final_BYU ~ deg[deg!=0] + 0))
-
-# duration weight
-summary(lm(final_BYU ~ colsums(real_adj)[colsums(real_adj) > 0] + 0))
-
-# kickass one
-summary(lm(final_BYU ~ colsums(real_adj)[colsums(real_adj) > 0] + colsums(mat2)[colsums(real_adj) > 0] + 0))
-
-# correlated residuals
-
-cor.test(residuals(lm(colsums(mat2) ~ colsums(real_adj)+ 0))[colsums(real_adj) > 0], final_BYU)
-
-
-```
-
-Scene 1.75: representative network graphs
+Figure 4: representative network graphs
 ```{r}
 
 under_df <- data.frame(x = rep(under, sum(bin_adj[under,])), y = which(bin_adj[under,]))
@@ -725,6 +759,9 @@ ggraph(under_g, layout = 'kk') +
     plot.background = element_rect(fill = "transparent", colour = NA),
     legend.key=element_blank()
   )
+ggsave("./out/figure4a.pdf", width = 6.5, height = 4)
+
+####
 
 closest_df <- data.frame(x = rep(closest, sum(bin_adj[closest,])), y = which(bin_adj[closest,]))
 for(i in which(bin_adj[closest,])){
@@ -747,6 +784,9 @@ ggraph(closest_g, layout = 'kk') +
     plot.background = element_rect(fill = "transparent",colour = NA),
     legend.key=element_blank()
   )
+ggsave("./out/figure4b.pdf", width = 6.5, height = 4)
+
+####
 
 over_df <- data.frame(x = rep(over, sum(bin_adj[over,])), y = which(bin_adj[over,]))
 for(i in which(bin_adj[over,])){
@@ -769,179 +809,113 @@ ggraph(over_g, layout = 'kk') +
     plot.background = element_rect(fill = "transparent",colour = NA),
     legend.key=element_blank()
   )
+ggsave("./out/figure4c.pdf", width = 6.5, height = 4)
 
 ```
 
-
-Scene 2: durations of contacts
+Figure 5: regression analyses
 ```{r}
 
-ggplot(data.frame(t = as.numeric(ts$duration)), aes(x=t)) + 
-  geom_histogram(breaks = seq(0,110000, 1000)) + 
-  labs(
-    title = "Duration of Contact, BYU",
-    x = "Time (seconds)",
-    y = "Frequency"
+# Pull in results from Small_Model_BYU.R
+load("./final_BYU.RData")
+
+# Time-weighted second degree contact matrix
+mat2 <- real_adj %*% real_adj
+diag(mat2) <- 0
+
+# Regression results table
+table_reg <- data.frame()
+
+# equal weight
+mod <- summary(lm(final ~ deg + 0))
+table_reg <- rbind(
+  table_reg,
+  c(
+    "Equal-Weighted Contacts",
+    paste(mod$adj.r.squared),
+    paste(mod$coefficients[3]),
+    "***" # copied based on results
   )
-
-# parameter estimation
-
-lik <- function(params, deg){
-  -sum(log(dnbinom(deg, params[1], params[2])))
-}
-
-est <- suppressWarnings(
-  nlm(lik, p = c(mean(deg)^2/(var(deg) - mean(deg)), mean(deg)/var(deg)), deg=deg)
 )
 
-```
-
-
-Scene 3: total duration of all contacts by person
-
-```{r}
-
-ggplot(data.frame(t = colsums(real_adj)[colsums(real_adj) != 0]), aes(x=t)) + 
-  geom_histogram(breaks = seq(0,450000, 5000)) + 
-  labs(
-    title = "Total Duration of all Contacts by Person, BYU",
-    x = "Time (seconds)",
-    y = "Frequency"
-  ) 
-
-```
-
-
-
-Scene 4: when people are interacting
-```{r}
-hour_interactions <- c()
-hour_breaks <- seconds(seq(0, 604800, 3600))
-for (i in 2:length(hour_breaks)) {
-  sub <- subset(ts, hour_breaks[i-1] <= time & time < hour_breaks[i])
-  sub <- unique(sub[,1:2])
-  hour_interactions[i-1] <- nrow(sub)
-}
-
-timebins <- start + hour_breaks[1:(length(hour_breaks) - 1)]
-
-ggplot(data.frame(t = timebins, count = hour_interactions), aes(x=t, y = count)) + 
-  geom_line() + 
-  labs(
-    title = "Timing of Interactions, BYU",
-    x = "Time",
-    y = "Number of Interactions"
-  ) + 
-  scale_x_datetime(breaks = date_breaks(width = "1 day"), date_labels = "%a %h %d 12:00am") + 
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = -45, vjust = 1, hjust=0)) 
-
-
-```
-
-
-
-
-Scene 5: actual graph vs. predicted graph example
-
-```{r}
-toy_adj <- pred_adj
-binaries <- runif(nrow(toy_adj) * (nrow(toy_adj) - 1) / 2) < upper_tri(toy_adj)
-toy_adj[upper.tri(toy_adj)] <- binaries
-toy_adj <- t(toy_adj)
-toy_adj[upper.tri(toy_adj)] <- binaries
-
-toy_g <- graph_from_adjacency_matrix(toy_adj[colsums(toy_adj) > 0, colsums(toy_adj) > 0], mode = "undirected")
-real_g <- graph_from_adjacency_matrix(bin_adj[colsums(bin_adj) > 0, colsums(bin_adj) > 0], mode = "undirected")
-
-colors_toy <- colorRampPalette(c("#aa8888", "#ff3333"))(max(degree(toy_g)))
-colors_real <- colorRampPalette(c("#aa8888", "#ff3333"))(max(degree(real_g)))
-
-
-plot(
-  toy_g, 
-  vertex.size = 2, 
-  vertex.color = colors_toy[degree(toy_g)],
-  vertex.frame.color = NA, 
-  vertex.label = "",
-  edge.width = 0.5,
-  edge.color = "#aaaaaa"
-)
-
-plot(
-  real_g, 
-  vertex.size = 2, 
-  vertex.color = colors_real[degree(real_g)],
-  vertex.frame.color = NA, 
-  vertex.label = "",
-  edge.width = 0.5,
-  edge.color = "#aaaaaa"
-)
-
-transitivity(toy_g)
-transitivity(real_g)
-
-average.path.length(toy_g)
-average.path.length(real_g)
-
-```
-
-
-Scene 5.1: MC for cluster and average path length
-```{r}
-
-graph_stats <- function(idfk){
-  
-  toy_adj <- pred_adj
-  binaries <- runif(nrow(toy_adj) * (nrow(toy_adj) - 1) / 2) < upper_tri(toy_adj)
-  toy_adj[upper.tri(toy_adj)] <- binaries
-  toy_adj <- t(toy_adj)
-  toy_adj[upper.tri(toy_adj)] <- binaries
-  
-  toy_g <- graph_from_adjacency_matrix(toy_adj[colsums(toy_adj) > 0, colsums(toy_adj) > 0], mode = "undirected")
-  
-  return(
-      c(
-      transitivity(toy_g),
-      average.path.length(toy_g)
-    )
+# duration weight
+mod <- summary(lm(final ~ colsums(real_adj) + 0))
+table_reg <- rbind(
+  table_reg,
+  c(
+    "Duration-Weighted Contacts",
+    paste(mod$adj.r.squared),
+    paste(mod$coefficients[3]),
+    "***" # copied based on results
   )
+)
 
-}
+# duration weight, 1st + 2nd degree
+mod <- summary(lm(final ~ colsums(real_adj) + colsums(mat2) + 0))
+table_reg <- rbind(
+  table_reg,
+  c(
+    "Duraion-Weighted 1st- and 2nd-Degree Contacts",
+    paste(mod$adj.r.squared),
+    paste(mod$coefficients[,3], collapse = ", "),
+    "***, ***" # copied based on results
+  )
+)
 
-res <- matrix(unlist(mclapply(1:10000, graph_stats, mc.cores = 12)), ncol = 2, byrow = TRUE)
+colnames(table_reg) <- c("Predictor(s)", "Adjusted R-Squared", "t Statistic(s)", "Significance Code(s)")
 
-mean(res[,1])
-quantile(res[,1], c(0.025, 0.975), type = 1)
+tg = gridExtra::tableGrob(table_reg, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
 
-mean(res[,2])
-quantile(res[,2], c(0.025, 0.975), type = 1)
+pdf("./out/figure5b.pdf", width=w, height=h)
+grid.table(table_reg, rows = NULL)
+dev.off()
+
 
 ```
 
-
-Scene 6: transmission graph.
-
-
-Scene 7a: Histogram of cumulative cases after 4-weeks (incl. index) - different R0
+Figure 6: Histogram of cumulative cases after 4-weeks (incl. index) - different R0
 ```{r}
 
 results_R0 <- data.frame()
 
 for (R0 in seq(1,3,0.5)) {
   lambda <- nlm(err, R0/(((sigma2 + mu^2)/mu - 1) * mean(total_time)))$estimate
-  new_results <- matrix(unlist(mclapply(1:1000, outbreak, mc.cores = 12)), ncol = 2, byrow = TRUE)
+  new_results <- matrix(unlist(mclapply(1:10000, outbreak, mc.cores = 12)), ncol = 2, byrow = TRUE)
   new_results <- cbind(new_results, rep(R0, nrow(new_results)))
   new_results <- new_results[,2:3]
   results_R0 <- rbind(results_R0, as.data.frame(new_results))
 }
 colnames(results_R0) <- c("cases", "R0")
 
+####
+
+table_R0 <- data.frame()
+
 for (i in seq(1,3,0.5)) {
-  print(mean(results_R0$cases[which(results_R0$R0 == i)]))
-  print(median(results_R0$cases[which(results_R0$R0 == i)]))
-  print(quantile(results_R0$cases[which(results_R0$R0 == i)], c(0.025, 0.975), type = 1))
+  table_R0 <- rbind(
+    table_R0,
+    c(
+      i,
+      paste(mean(results_R0$cases[which(results_R0$R0 == i)])),
+      paste(median(results_R0$cases[which(results_R0$R0 == i)])),
+      paste(quantile(results_R0$cases[which(results_R0$R0 == i)], c(0.025, 0.975), type = 1), collapse = "-")
+    )
+  )
 }
+
+colnames(table_R0) <- c("Reproductive Number", "Mean Cases, 4 Weeks", "Median Cases, 4 Weeks", "Credible Interval")
+
+tg = gridExtra::tableGrob(table_R0, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
+
+pdf("./out/figure6b.pdf", width=w, height=h)
+grid.table(table_R0, rows = NULL)
+dev.off()
+
+####
 
 ggplot(results_R0, aes(cases, factor(R0))) + 
   geom_violin(aes(fill = R0), scale = "width") +
@@ -952,9 +926,12 @@ ggplot(results_R0, aes(cases, factor(R0))) +
     x = "Cases"
   )
 
+ggsave("./out/figure6a.pdf", width = 6.5, height = 4)
+
+
 ```
 
-Scene 7b: Histogram of cumulative cases after 4-weeks (incl. index) - different testing
+Figure 7: Histogram of cumulative cases after 4-weeks (incl. index) - different testing levels
 ```{r}
 
 results_testing <- data.frame()
@@ -964,7 +941,7 @@ lambda <- nlm(err, R0/(((sigma2 + mu^2)/mu - 1) * mean(total_time)))$estimate
 
 for (daily_tests in seq(500,2000,500)) {
   
-  new_results <- as.data.frame(matrix(unlist(mclapply(1:1000, outbreak, daily_tests = daily_tests, mc.cores = 12)), ncol = 2, byrow = TRUE))
+  new_results <- as.data.frame(matrix(unlist(mclapply(1:10000, outbreak, daily_tests = daily_tests, mc.cores = 12)), ncol = 2, byrow = TRUE))
   new_results <- cbind(new_results, rep(daily_tests, nrow(new_results)))
   new_results <- cbind(new_results, rep("random", nrow(new_results)))
   colnames(new_results) <- c("primary_transmissions", "cases", "daily_tests", "type")
@@ -973,29 +950,69 @@ for (daily_tests in seq(500,2000,500)) {
 
 for (daily_tests in seq(500,2000,500)) {
   
-  new_results <- as.data.frame(matrix(unlist(mclapply(1:1000, outbreak, daily_tests = daily_tests, test_strategic = TRUE, mc.cores = 12)), ncol = 2, byrow = TRUE))
+  new_results <- as.data.frame(matrix(unlist(mclapply(1:10000, outbreak, daily_tests = daily_tests, test_strategic = TRUE, mc.cores = 12)), ncol = 2, byrow = TRUE))
   new_results <- cbind(new_results, rep(daily_tests, nrow(new_results)))
   new_results <- cbind(new_results, rep("strategic", nrow(new_results)))
   colnames(new_results) <- c("primary_transmissions", "cases", "daily_tests", "type")
   results_testing <- rbind(results_testing, as.data.frame(new_results))
 }
 
-for (i in seq(500,2000,500)) {
-  print(mean(results_testing$primary_transmissions[which(results_testing$daily_tests == i & results_testing$type == "random")]))
-  print(mean(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")]))
-  print(median(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")]))
-  print(quantile(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")], c(0.025, 0.975), type = 1))
-}
+table_test_random <- data.frame()
 
 for (i in seq(500,2000,500)) {
-  print(mean(results_testing$primary_transmissions[which(results_testing$daily_tests == i & results_testing$type == "strategic")]))
-  print(mean(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")]))
-  print(median(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")]))
-  print(quantile(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")], c(0.025, 0.975), type = 1))
+  table_test_random <- rbind(
+    table_test_random,
+    c(
+      paste(i),
+      paste(mean(results_testing$primary_transmissions[which(results_testing$daily_tests == i & results_testing$type == "random")])),
+      paste(mean(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")])),
+      paste(median(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")])),
+      paste(quantile(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "random")], c(0.025, 0.975), type = 1), collapse = "-")
+    )
+  )
 }
+
+colnames(table_test_random) <- c("Daily Tests", "Reproductive Number", "Mean Cases, 4 Weeks", "Median Cases, 4 Weeks", "Credible Interval")
+
+tg = gridExtra::tableGrob(table_test_random, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
+
+pdf("./out/figure7b.pdf", width=w, height=h)
+grid.table(table_test_random, rows = NULL)
+dev.off()
+
+####
+
+table_test_strategic <- data.frame()
+
+for (i in seq(500,2000,500)) {
+  table_test_strategic <- rbind(
+    table_test_strategic,
+    c(
+      paste(i),
+      paste(mean(results_testing$primary_transmissions[which(results_testing$daily_tests == i & results_testing$type == "strategic")])),
+      paste(mean(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")])),
+      paste(median(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")])),
+      paste(quantile(results_testing$cases[which(results_testing$daily_tests == i & results_testing$type == "strategic")], c(0.025, 0.975), type = 1), collapse = "-")
+    )
+  )
+}
+
+colnames(table_test_strategic) <- c("Daily Tests", "Reproductive Number", "Mean Cases, 4 Weeks", "Median Cases, 4 Weeks", "Credible Interval")
+
+tg = gridExtra::tableGrob(table_test_strategic, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
+
+pdf("./out/figure7c.pdf", width=w, height=h)
+grid.table(table_test_strategic, rows = NULL)
+dev.off()
+
+####
 
 ggplot(results_testing, aes(fill = type, x = cases, y = factor(daily_tests))) + 
-  geom_violin(scale = "width") +
+  geom_violin(scale = "width", bw = 0.1) +
   theme_minimal() +
   labs(
     title = "Cumulative Cases after 4 Weeks",
@@ -1004,9 +1021,12 @@ ggplot(results_testing, aes(fill = type, x = cases, y = factor(daily_tests))) +
   ) +
   scale_x_continuous(trans='log10')
 
+ggsave("./out/figure7a.pdf", width = 6.5, height = 4)
+
+
 ```
 
-Scene 7c: Histogram of cumulative cases after 4-weeks (incl. index) - different vax
+Figure 8: Histogram of cumulative cases after 4-weeks (incl. index) - different vaccination rates
 ```{r}
 
 results_vax <- data.frame()
@@ -1016,7 +1036,7 @@ lambda <- nlm(err, R0/(((sigma2 + mu^2)/mu - 1) * mean(total_time)))$estimate
 
 for (p_vax in seq(0.2,0.8,0.2)) {
   
-  new_results <- as.data.frame(matrix(unlist(mclapply(1:1000, outbreak, p_vax = p_vax, mc.cores = 12)), ncol = 2, byrow = TRUE))
+  new_results <- as.data.frame(matrix(unlist(mclapply(1:10000, outbreak, p_vax = p_vax, mc.cores = 12)), ncol = 2, byrow = TRUE))
   new_results <- cbind(new_results, rep(p_vax, nrow(new_results)))
   new_results <- cbind(new_results, rep("random", nrow(new_results)))
   colnames(new_results) <- c("primary_transmissions", "cases", "p_vax", "type")
@@ -1025,29 +1045,71 @@ for (p_vax in seq(0.2,0.8,0.2)) {
 
 for (p_vax in seq(0.2,0.8,0.2)) {
   
-  new_results <- as.data.frame(matrix(unlist(mclapply(1:1000, outbreak, p_vax = p_vax, vax_strategic = TRUE, mc.cores = 12)), ncol = 2, byrow = TRUE))
+  new_results <- as.data.frame(matrix(unlist(mclapply(1:10000, outbreak, p_vax = p_vax, vax_strategic = TRUE, mc.cores = 12)), ncol = 2, byrow = TRUE))
   new_results <- cbind(new_results, rep(p_vax, nrow(new_results)))
   new_results <- cbind(new_results, rep("strategic", nrow(new_results)))
   colnames(new_results) <- c("primary_transmissions", "cases", "p_vax", "type")
   results_vax <- rbind(results_vax, as.data.frame(new_results))
 }
 
-for (i in seq(0.2,0.8,0.2)) {
-  print(mean(results_vax$primary_transmissions[which(results_vax$p_vax == i & results_vax$type == "random")]))
-  print(mean(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")]))
-  print(median(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")]))
-  print(quantile(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")], c(0.025, 0.975), type = 1))
-}
+####
+
+table_vax_random <- data.frame()
 
 for (i in seq(0.2,0.8,0.2)) {
-  print(mean(results_vax$primary_transmissions[which(results_vax$p_vax == i & results_vax$type == "strategic")]))
-  print(mean(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")]))
-  print(median(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")]))
-  print(quantile(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")], c(0.025, 0.975), type = 1))
+  table_vax_random <- rbind(
+    table_vax_random,
+    c(
+      paste(i * 100, "%", sep = ""),
+      paste(mean(results_vax$primary_transmissions[which(results_vax$p_vax == i & results_vax$type == "random")])),
+      paste(mean(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")])),
+      paste(median(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")])),
+      paste(quantile(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "random")], c(0.025, 0.975), type = 1), collapse = "-")
+    )
+  )
 }
+
+colnames(table_vax_random) <- c("Vaccination Rate", "Reproductive Number", "Mean Cases, 4 Weeks", "Median Cases, 4 Weeks", "Credible Interval")
+
+tg = gridExtra::tableGrob(table_vax_random, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
+
+pdf("./out/figure8b.pdf", width=w, height=h)
+grid.table(table_vax_random, rows = NULL)
+dev.off()
+
+####
+
+table_vax_strategic <- data.frame()
+
+for (i in seq(0.2,0.8,0.2)) {
+  table_vax_strategic <- rbind(
+    table_vax_strategic,
+    c(
+      paste(i * 100, "%", sep = ""),
+      paste(mean(results_vax$primary_transmissions[which(results_vax$p_vax == i & results_vax$type == "strategic")])),
+      paste(mean(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")])),
+      paste(median(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")])),
+      paste(quantile(results_vax$cases[which(results_vax$p_vax == i & results_vax$type == "strategic")], c(0.025, 0.975), type = 1), collapse = "-")
+    )
+  )
+}
+
+colnames(table_vax_strategic) <- c("Vaccination Rate", "Reproductive Number", "Mean Cases, 4 Weeks", "Median Cases, 4 Weeks", "Credible Interval")
+
+tg = gridExtra::tableGrob(table_vax_strategic, rows = NULL)
+h = grid::convertHeight(sum(tg$heights), "in", TRUE)
+w = grid::convertWidth(sum(tg$widths), "in", TRUE)
+
+pdf("./out/figure8c.pdf", width=w, height=h)
+grid.table(table_vax_strategic, rows = NULL)
+dev.off()
+
+####
 
 ggplot(results_vax, aes(fill = type, x = cases, y = factor(p_vax))) + 
-  geom_violin(scale = "width") +
+  geom_violin(scale = "width", bw = 0.1) +
   theme_minimal() +
   labs(
     title = "Cumulative Cases after 4 Weeks",
@@ -1056,98 +1118,9 @@ ggplot(results_vax, aes(fill = type, x = cases, y = factor(p_vax))) +
   ) +
   scale_x_continuous(trans='log10')
 
-```
-
-
-
-Scene 8: Social promiscuity
-
-```{r}
-full_users <- leger$id
-
-full_hour_breaks <- seconds(seq(0, as.numeric(difftime(max(contacts$end_time), min(contacts$time), units = "secs")), 3600))
-
-sim_breaks <- round(start, units = "hours") + full_hour_breaks
-
-clean_contacts <- contacts
-i = 1
-while (i <= nrow(clean_contacts)) {
-  if(floor_date(clean_contacts$time[i], unit = "hours") != floor_date(clean_contacts$end_time[i], unit = "hours")){
-    newrow <- clean_contacts[i, ]
-    newrow$time <- floor_date(clean_contacts$end_time[i], unit = "hours")
-    newrow$duration <- newrow$end_time - newrow$time
-    clean_contacts <- rbind(clean_contacts, newrow)
-    clean_contacts$end_time[i] <- floor_date(clean_contacts$end_time[i], unit = "hours")
-    clean_contacts$duration[i] <- clean_contacts$end_time[i] - clean_contacts$time[i]
-    row.names(clean_contacts) <- 1:nrow(clean_contacts)
-  }
-  i <- i + 1
-}
-clean_contacts <- clean_contacts[with(clean_contacts, order(user_id, peer_id, time)), ]
-row.names(clean_contacts) <- 1:nrow(clean_contacts)
-
-promiscuity <- data.frame()
-promiscuity <- rbind(promiscuity, rep(0, length(full_users)))
-
-prom_mtx <- matrix(0, nrow = length(full_users), ncol = length(full_users))
-
-for (i in 2:(length(sim_breaks))) {
-  print(i)
-  subc <- subset(clean_contacts, sim_breaks[i-1] <= time & time < sim_breaks[i])
-  subc <- subc[,c("user_id", "peer_id", "duration")]
-  
-  combs <- unique(subc[, c("user_id", "peer_id")])
-  
-  for (r in 1:nrow(combs)) {
-    who <- c(combs$user_id[r], combs$peer_id[r])
-    subsubc <- subset(subc, user_id == who[1] & peer_id == who[2])
-    prom_mtx[which(full_users == who[1]), which(full_users == who[2])] <- prom_mtx[which(full_users == who[1]), which(full_users == who[2])] + sum(subsubc$duration)
-    prom_mtx[which(full_users == who[2]), which(full_users == who[1])] <- prom_mtx[which(full_users == who[2]), which(full_users == who[1])] + sum(subsubc$duration)
-  }
-  promiscuity <- rbind(promiscuity, colsums(1 - exp(-0.001*prom_mtx)))
-}
-
-promiscuity <- cbind(sim_breaks, promiscuity)
-colnames(promiscuity) <- c("time", paste0("user_", full_users))
-
-write.csv(promiscuity, "promiscuity_BYU.csv")
+ggsave("./out/figure8a.pdf", width = 6.5, height = 4)
 
 ```
-
-
-Did vaccination change promiscuity?
-```{r}
-vaxed <- data$user_id[data$out == "VACCINATED"]
-when_vaxed <- as.POSIXct(data$time[data$out == "VACCINATED"], origin = "1970-01-01", tz = "America/Denver")
-
-# time-weighted
-rate_before <- c()
-rate_after <- c()
-
-# when do contacts start/end
-min_time <- min(contacts$time)
-max_time <- max(contacts$time)
-
-for (i in 1:length(vaxed)) {
-  subc <- subset(contacts, user_id == vaxed[i] | peer_id == vaxed[i])
-  before <- subset(subc, time < when_vaxed[i])
-  after <- subset(subc, time >= when_vaxed[i])
-  
-  rate_before[i] <- as.numeric(length(before$duration)) / as.numeric(difftime(when_vaxed[i], min_time, units = "secs"))
-  rate_after[i] <- as.numeric(length(after$duration)) / as.numeric(difftime(max_time, when_vaxed[i], units = "secs"))
-  
-}
-
-t.test(rate_after, rate_before)
-
-
-```
-
-
-
-
-
-
 
 
 

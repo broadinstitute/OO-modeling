@@ -1,6 +1,4 @@
-#ACT ONE: preliminaries
-
-#Scene 1. Load and clean data
+# Load and clean data
 
 library(igraph)
 library(lubridate)
@@ -60,6 +58,31 @@ contacts <- contacts[with(contacts, order(time)), ]
 row.names(contacts) <- 1:nrow(contacts)
 duration <- contacts$end_time - contacts$time
 contacts <- cbind(contacts, duration)
+
+###
+
+# Who escaped?
+escape <- subset(data, out == "ESCAPED")
+escape <- escape[, c("user_id", "time")]
+escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
+escape <- escape[order(escape$time),]
+row.names(escape) <- 1:nrow(escape)
+
+# When did the simulation start?
+start = as.POSIXct(min(contacts$time), origin = "1970-01-01", tz = "America/Denver")
+
+# When did the simulation end?
+end <- as.POSIXct(max(contacts$time), origin = "1970-01-01", tz = "America/Denver")
+
+# Who escaped BEFORE the end?
+escapees <- escape$user_id[escape$time < end]
+
+# All participants
+users <- setdiff(leger$id, escapees)
+
+# Subset ts
+contacts <- subset(contacts, (user_id %in% users & peer_id %in% users))
+contacts <- subset(contacts, time < end)
 
 # Modify contacts to break by hour
 
@@ -121,7 +144,7 @@ row.names(df) <- 1:nrow(df)
 
 # Rename the people
 
-users <- sort(unique(c(df$user_id, df$peer_id)))
+#users <- sort(unique(c(df$user_id, df$peer_id)))
 
 rename <- function(user){
   which(users == user)
@@ -229,5 +252,5 @@ for (i in 2:length(breaks)) {
 
 final <- 1 - S[nrow(S), ]
 
-save(final, file = "final.RData")
+save(final, file = "final_CMU.RData")
 

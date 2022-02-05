@@ -1,6 +1,4 @@
-#ACT ONE: preliminaries
-
-#Scene 1. Load and clean data
+# Load and clean data
 
 library(igraph)
 library(lubridate)
@@ -61,6 +59,31 @@ row.names(contacts) <- 1:nrow(contacts)
 duration <- contacts$end_time - contacts$time
 contacts <- cbind(contacts, duration)
 
+###
+
+# Who escaped?
+escape <- subset(data, out == "ESCAPED")
+escape <- escape[, c("user_id", "time")]
+escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
+escape <- escape[order(escape$time),]
+row.names(escape) <- 1:nrow(escape)
+
+# When did the simulation start?
+start = as.POSIXct(min(contacts$time), origin = "1970-01-01", tz = "America/Denver")
+
+# When did the simulation end?
+end <- as.POSIXct(max(contacts$time), origin = "1970-01-01", tz = "America/Denver")
+
+# Who escaped BEFORE the end?
+escapees <- escape$user_id[escape$time < end]
+
+# All participants
+users <- setdiff(leger$id, escapees)
+
+# Subset ts
+contacts <- subset(contacts, (user_id %in% users & peer_id %in% users))
+contacts <- subset(contacts, time < end)
+
 # Modify contacts to break by hour
 
 i=1
@@ -87,30 +110,9 @@ while (i <= nrow(contacts)) {
 
 contacts <- contacts[with(contacts, order(time)), ]
 
-# eliminate escapees
-
-escape <- subset(data, out == "ESCAPED")
-escape <- escape[, c("user_id", "time")]
-escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
-escape <- escape[order(escape$time),]
-row.names(escape) <- 1:nrow(escape)
-
-# Time info for escape
-
-start = as.POSIXct(min(contacts$time), origin = "1970-01-01", tz = "America/Denver")
-
-# get 1 week of contact data
-end <- start + weeks(1)
-
-escapees <- escape$user_id[escape$time < end]
-
-
-`%notin%` <- Negate(`%in%`)
-contacts <- subset(contacts, user_id %notin% escapees & peer_id %notin% escapees)
-
 # Merge contacts within an hour
 
-breaks <- seq(floor_date(start, unit = "hours"), floor_date(end, unit = "hours"), "hours")
+breaks <- seq(floor_date(min(contacts$time), unit = "hours"), ceiling_date(max(contacts$end_time), unit = "hours"), "hours")
 
 df <- data.frame()
 
@@ -142,7 +144,7 @@ row.names(df) <- 1:nrow(df)
 
 # Rename the people
 
-users <- sort(unique(c(df$user_id, df$peer_id)))
+#users <- sort(unique(c(df$user_id, df$peer_id)))
 
 rename <- function(user){
   which(users == user)
@@ -151,8 +153,6 @@ rename <- function(user){
 df$user_id <- sapply(df$user_id, rename)
 df$peer_id <- sapply(df$peer_id, rename)
 
-edgelist$user_id <- sapply(edgelist$user_id, rename)
-edgelist$peer_id <- sapply(edgelist$peer_id, rename)
 
 df$duration <- as.numeric(df$duration)
 
@@ -219,7 +219,7 @@ lambda <- suppressWarnings(
   nlm(get_lambda, R0 / (mean(df$duration) * avg_daily_contacts * avg_infection), R0 = R0, avg_infection = avg_infection)$estimate
 )
 
-#lambda <- lambda * (1 - (input$vax * input$p_vax)/10000) * (1 - (input$mask * input$p_mask)/10000)^2
+lambda <- lambda * (1 - (input$vax * input$p_vax)/10000) * (1 - (input$mask * input$p_mask)/10000)^2
 
 
 S <- matrix(ncol = N, nrow = length(breaks))
@@ -240,9 +240,7 @@ for (i in 2:length(breaks)) {
   subusers <- unique(c(subdf$user_id, subdf$peer_id))
   
   p_transmit <- rep(0, N)
-  if(typeof(sapply(subusers, pickup, time = i, I = I, lambda = lambda))!= "list"){
-    p_transmit[subusers] <- sapply(subusers, pickup, time = i, I = I, lambda = lambda)
-  }
+  p_transmit[subusers] <- sapply(subusers, pickup, time = i, I = I, lambda = lambda)
   
   
   S[i, ] <- S[i-1, ] - S[i-1, ]*p_transmit
@@ -252,7 +250,7 @@ for (i in 2:length(breaks)) {
   
 }
 
-final_BYU <- 1 - S[nrow(S), ]
+final <- 1 - S[nrow(S), ]
 
-save(final_BYU, file = "final_BYU.RData")
+save(final, file = "final_BYU.RData")
 
