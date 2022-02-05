@@ -71,10 +71,10 @@ row.names(escape) <- 1:nrow(escape)
 # When did the simulation start?
 start = as.POSIXct(min(contacts$time), origin = "1970-01-01", tz = "America/Denver")
 
-# When did the simulation end?
-end <- as.POSIXct(max(contacts$time), origin = "1970-01-01", tz = "America/Denver")
+# Limit to 1 week of contact data
+end <- start + weeks(1)
 
-# Who escaped BEFORE the end?
+# Who escaped BEFORE one week elapsed
 escapees <- escape$user_id[escape$time < end]
 
 # All participants
@@ -219,7 +219,7 @@ lambda <- suppressWarnings(
   nlm(get_lambda, R0 / (mean(df$duration) * avg_daily_contacts * avg_infection), R0 = R0, avg_infection = avg_infection)$estimate
 )
 
-lambda <- lambda * (1 - (input$vax * input$p_vax)/10000) * (1 - (input$mask * input$p_mask)/10000)^2
+#lambda <- lambda * (1 - (input$vax * input$p_vax)/10000) * (1 - (input$mask * input$p_mask)/10000)^2
 
 
 S <- matrix(ncol = N, nrow = length(breaks))
@@ -240,7 +240,9 @@ for (i in 2:length(breaks)) {
   subusers <- unique(c(subdf$user_id, subdf$peer_id))
   
   p_transmit <- rep(0, N)
-  p_transmit[subusers] <- sapply(subusers, pickup, time = i, I = I, lambda = lambda)
+  if(length(subusers)>0){
+    p_transmit[subusers] <- sapply(subusers, pickup, time = i, I = I, lambda = lambda)
+  }
   
   
   S[i, ] <- S[i-1, ] - S[i-1, ]*p_transmit

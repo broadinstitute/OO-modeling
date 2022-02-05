@@ -355,8 +355,8 @@ table_reg <- rbind(
   table_reg,
   c(
     "Equal-Weighted Contacts",
-    paste(mod$adj.r.squared),
-    paste(mod$coefficients[3]),
+    paste(round(mod$adj.r.squared, 3)),
+    paste(round(mod$coefficients[3], 3)),
     "***" # copied based on results
   )
 )
@@ -367,8 +367,8 @@ table_reg <- rbind(
   table_reg,
   c(
     "Duration-Weighted Contacts",
-    paste(mod$adj.r.squared),
-    paste(mod$coefficients[3]),
+    paste(round(mod$adj.r.squared, 3)),
+    paste(round(mod$coefficients[3], 3)),
     "***" # copied based on results
   )
 )
@@ -379,8 +379,8 @@ table_reg <- rbind(
   table_reg,
   c(
     "Duraion-Weighted 1st- and 2nd-Degree Contacts",
-    paste(mod$adj.r.squared),
-    paste(mod$coefficients[,3], collapse = ", "),
+    paste(round(mod$adj.r.squared, 3)),
+    paste(round(mod$coefficients[,3], 3), collapse = ", "),
     "***, ***" # copied based on results
   )
 )
