@@ -646,6 +646,9 @@ theme_minimal()
 
 ggsave("./out/figure1b.pdf", width = 6.5, height = 4)
 
+mean(deg2)
+sd(deg2)
+range(deg2)
 
 ```
 
@@ -855,7 +858,7 @@ mod <- summary(lm(final ~ colsums(real_adj) + colsums(mat2) + 0))
 table_reg <- rbind(
   table_reg,
   c(
-    "Duraion-Weighted 1st- and 2nd-Degree Contacts",
+    "Duration-Weighted 1st- and 2nd-Degree Contacts",
     paste(round(mod$adj.r.squared, 3)),
     paste(round(mod$coefficients[,3], 3), collapse = ", "),
     "***, ***" # copied based on results
