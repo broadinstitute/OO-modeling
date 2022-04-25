@@ -54,6 +54,15 @@ contacts <- cbind(contacts, end_time)
 convert_peer_ID <- function(x, leger){
   return(leger[which(leger[,"p2p_id"] == x), "id"][1])
 }
+
+# Convert old ID to new sim ID
+convert_user_ID <- function(x, leger){
+  return(
+    leger$id[which(leger$p2p_id == leger$p2p_id[which(leger$id == x)])[1]]
+  )
+}
+
+contacts[,"user_id"] <- sapply(contacts[,"user_id"], convert_user_ID, leger = leger)
 contacts[,"peer_id"] <- sapply(contacts[,"peer_id"], convert_peer_ID, leger = leger)
 
 # Reformat contact time
@@ -106,6 +115,7 @@ escape <- subset(data, out == "ESCAPED")
 escape <- escape[, c("user_id", "time")]
 escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
 escape <- escape[order(escape$time),]
+escape[,"user_id"] <- sapply(escape[,"user_id"], convert_user_ID, leger = leger)
 row.names(escape) <- 1:nrow(escape)
 
 # When did the simulation start?
@@ -118,6 +128,7 @@ end <- as.POSIXct(max(contacts$time), origin = "1970-01-01", tz = "America/Denve
 escapees <- escape$user_id[escape$time < end]
 
 # All participants
+leger[,"id"] <- sapply(leger[,"id"], convert_user_ID, leger = leger)
 users <- setdiff(leger$id, escapees)
 
 # Subset ts
@@ -234,6 +245,12 @@ quantile(res[,1], c(0.025, 0.975), type = 1)
 mean(res[,2])
 quantile(res[,2], c(0.025, 0.975), type = 1)
 
+real_g <- graph_from_adjacency_matrix(bin_adj, mode = "undirected")
+
+transitivity(real_g)
+average.path.length(real_g)
+length(E(real_g))
+
 ```
 
 
@@ -335,6 +352,9 @@ ggsave("./out/figure3a.pdf", width = 6.5, height = 4)
 print(mean(deg))
 print(sd(deg))
 print(range(deg))
+
+print(best_p)
+print(RMSE)
 
 
 ```

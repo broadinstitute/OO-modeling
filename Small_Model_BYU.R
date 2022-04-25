@@ -7,41 +7,63 @@ library(mixdist)
 library(parallel)
 library(ggplot2)
 
-setwd("~/Desktop/OO-modeling/")
+# Set directory to the location of "OO-modeling" folder
+setwd("~/Desktop/OO-modeling")
 
+# Read in OO simulation backend
 data <- read.csv("./histories_BYU.csv")
-leger <- read.csv("./participants_BYU.csv")
 
+# Read in key to convert between simulation IDs and P2P IDs
+leger <- read.csv("./participants_BYU.csv")
 leger[,"p2p_id"] <- paste(leger[,"p2p_id"])
 data[,"peer_id"] <- paste(data[,"peer_id"])
 
+# Limit data to contacts only
 contacts <- subset(data, type == "contact")
+
+# Reformat contact duration
 contacts$contact_length <- round(milliseconds(contacts$contact_length))
+
+# Compute end time per contact
 end_time <- contacts$time + contacts$contact_length
+
+# Subset dataset to relevant categories
 contacts <- contacts[, c("user_id", "peer_id", "time")]
 contacts <- cbind(contacts, end_time)
 
+# Convert P2P ID to sim ID
 convert_peer_ID <- function(x, leger){
   return(leger[which(leger[,"p2p_id"] == x), "id"][1])
 }
 
+# Convert old ID to new sim ID
+convert_user_ID <- function(x, leger){
+  return(
+    leger$id[which(leger$p2p_id == leger$p2p_id[which(leger$id == x)])[1]]
+  )
+}
+
+contacts[,"user_id"] <- sapply(contacts[,"user_id"], convert_user_ID, leger = leger)
 contacts[,"peer_id"] <- sapply(contacts[,"peer_id"], convert_peer_ID, leger = leger)
 
+# Reformat contact time
 contacts$time <- as.POSIXct(contacts$time, origin = "1970-01-01", tz = "America/Denver")
 contacts$end_time <- as.POSIXct(contacts$end_time, origin = "1970-01-01", tz = "America/Denver")
 
+# Make user ID consistently less than peer ID
 lower <- pmin(contacts$user_id, contacts$peer_id)
 upper <- pmax(contacts$user_id, contacts$peer_id)
-
 contacts$user_id <- lower
 contacts$peer_id <- upper
 
 contacts <- contacts[with(contacts, order(user_id, peer_id, time)), ]
 
+# Length between contacts to merge into 1 contact
 gap <- 30 #seconds
 
+# Merge same contacts
 i=2
-while (i <= nrow(contacts)) {
+while (i < nrow(contacts)) {
   if(
     contacts[i,"user_id"] == contacts[i-1,"user_id"] & 
     contacts[i,"peer_id"] == contacts[i-1,"peer_id"] & 
@@ -54,6 +76,7 @@ while (i <= nrow(contacts)) {
   }
 }
 
+# Clean up datasheet and merge in relevant metrics
 contacts <- contacts[with(contacts, order(time)), ]
 row.names(contacts) <- 1:nrow(contacts)
 duration <- contacts$end_time - contacts$time
@@ -66,6 +89,7 @@ escape <- subset(data, out == "ESCAPED")
 escape <- escape[, c("user_id", "time")]
 escape$time <- as.POSIXct(escape$time, origin = "1970-01-01", tz = "America/Denver")
 escape <- escape[order(escape$time),]
+escape[,"user_id"] <- sapply(escape[,"user_id"], convert_user_ID, leger = leger)
 row.names(escape) <- 1:nrow(escape)
 
 # When did the simulation start?
@@ -78,9 +102,10 @@ end <- start + weeks(1)
 escapees <- escape$user_id[escape$time < end]
 
 # All participants
+leger[,"id"] <- sapply(leger[,"id"], convert_user_ID, leger = leger)
 users <- setdiff(leger$id, escapees)
 
-# Subset ts
+# Subset contacts
 contacts <- subset(contacts, (user_id %in% users & peer_id %in% users))
 contacts <- subset(contacts, time < end)
 
