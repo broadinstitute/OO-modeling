@@ -766,7 +766,7 @@ for(i in which(bin_adj[under,])){
 }
 under_g <- simplify(graph_from_data_frame(under_df, directed = FALSE))
 
-ggraph(under_g, layout = 'kk') + 
+ggraph(under_g, layout = 'stress') + 
   geom_edge_link(width = 0.2, alpha = 0.5) + 
   geom_node_point(
     aes(
@@ -791,7 +791,7 @@ for(i in which(bin_adj[closest,])){
 }
 closest_g <- simplify(graph_from_data_frame(closest_df, directed = FALSE))
 
-ggraph(closest_g, layout = 'kk') + 
+ggraph(closest_g, layout = 'stress') + 
   geom_edge_link(width = 0.2, alpha = 0.5) + 
   geom_node_point(
     aes(
@@ -816,7 +816,7 @@ for(i in which(bin_adj[over,])){
 }
 over_g <- simplify(graph_from_data_frame(over_df, directed = FALSE))
 
-ggraph(over_g, layout = 'kk') + 
+ggraph(over_g, layout = 'stress') + 
   geom_edge_link(width = 0.2, alpha = 0.5) + 
   geom_node_point(
     aes(
